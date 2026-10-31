@@ -32,6 +32,7 @@ button{background:none;border:0;color:var(--acc);font:inherit;padding:6px 4px}
 .ln p{margin:0;flex:1;white-space:pre-wrap;word-break:break-word}
 .ln.t{padding-left:12px;border-left:2px solid var(--faint)}
 .ln time{font-size:11px;color:var(--faint)}
+.pics{display:flex;gap:8px;overflow-x:auto;padding:0 20px 8px}.pics img{width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none}.vw{flex-direction:column;gap:14px;background:rgba(0,0,0,.88)}.vw button{color:#fff}.vb{display:flex;gap:22px}.ln .dl{display:none;color:var(--soft);font-size:13px}.ln.sel .dl{display:inline}.vw img{max-width:100%;max-height:calc(100% - 64px)}
 .day{text-align:center;font-size:12px;color:var(--faint);margin:14px 0 6px}
 .comp{display:flex;gap:6px;align-items:flex-end;padding:8px 16px;border-top:1px solid var(--line)}
 .comp textarea{flex:1;border:0;background:var(--line);border-radius:10px;padding:8px 12px;resize:none;max-height:120px}
@@ -45,13 +46,12 @@ button{background:none;border:0;color:var(--acc);font:inherit;padding:6px 4px}
 <body>
 <div id="app"></div>
 <script>
-// ▼ Supabase の値に置き換えてください
 const SB_URL="https://rcecnzsakcjgkeifbslw.supabase.co",SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjZWNuenNha2NqZ2tlaWZic2x3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyNzM3OTUsImV4cCI6MjEwNjg0OTc5NX0.DNgJRpCwnslC_7titQOaXzYibDaU_mg1jMMy_9JlkPU";
 
 const $=s=>document.querySelector(s),enc=new TextEncoder(),dec=new TextDecoder(),LS=localStorage;
 const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
-const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))),ub64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const b64=b=>{const u=new Uint8Array(b);let s="";for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)},ub64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 const sha=async s=>hex(await crypto.subtle.digest("SHA-256",enc.encode(s)));
 
 // 合言葉 → 部屋ID と 暗号鍵(別々に導出)。サーバーには合言葉も平文も渡らない
@@ -63,6 +63,10 @@ async function rpc(fn,a){const h={apikey:SB_KEY,"Content-Type":"application/json
 
 const app=$("#app");let S=null,T=0;
 let notes=JSON.parse(LS["memo.n"]||"null")||[{id:1,u:Date.now()-1728e5,b:"買い物\n牛乳\n卵\n食パン\n洗剤"},{id:2,u:Date.now()-432e6,b:"今週の予定\n水　燃えるごみ\n金　資源ごみ"}];
+const db=new Promise((ok,ng)=>{const r=indexedDB.open("memo",1);r.onupgradeneeded=()=>r.result.createObjectStore("p");r.onsuccess=()=>ok(r.result);r.onerror=ng});
+const idb=async(m,f)=>{const d=await db;return new Promise((ok,ng)=>{const t=d.transaction("p",m),r=f(t.objectStore("p"));t.oncomplete=()=>ok(r.result);t.onerror=ng})};
+const pPut=(k,v)=>idb("readwrite",s=>s.put(v,k)),pGet=k=>idb("readonly",s=>s.get(k)),pDel=k=>idb("readwrite",s=>s.delete(k));
+function shrink(f){return new Promise((ok,ng)=>{const u=URL.createObjectURL(f),i=new Image();i.onload=()=>{const k=Math.min(1,1600/Math.max(i.width,i.height)),c=document.createElement("canvas");c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext("2d").drawImage(i,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?ok(b):ng(),"image/jpeg",.8)};i.onerror=ng;i.src=u})}
 const persist=()=>LS["memo.n"]=JSON.stringify(notes);
 const title=n=>n.b.split("\n")[0]||"新規メモ";
 const lock=()=>{clearInterval(T);T=0;S=null};
@@ -79,15 +83,30 @@ function home(){
 }
 function fill(q){
   const L=notes.filter(n=>n.b.includes(q)).sort((a,b)=>b.u-a.u);
-  $("#ls").innerHTML=L.map(n=>`<div class="item" data-i="${n.id}"><b>${esc(title(n))}</b><span>${new Date(n.u).toLocaleDateString("ja-JP")}　${esc(n.b.split("\n")[1]||"追加のテキストなし")}</span></div>`).join("")||'<p class="empty">見つかりません</p>';
+  $("#ls").innerHTML=L.map(n=>`<div class="item" data-i="${n.id}"><b>${esc(title(n))}</b><span>${new Date(n.u).toLocaleDateString("ja-JP")}　${esc(n.b.split("\n")[1]||(n.ph&&n.ph.length?"写真 "+n.ph.length+"枚":"追加のテキストなし"))}</span></div>`).join("")||'<p class="empty">見つかりません</p>';
   $("#cnt").textContent=notes.length+"件のメモ";
 }
 function edit(id){
   const n=notes.find(x=>x.id===id);
-  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><button id="dl">削除</button></div><textarea class="ed" id="ed" placeholder="メモ"></textarea>`;
+  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span><button id="ph">写真</button><button id="dl">削除</button></span></div><textarea class="ed" id="ed" placeholder="メモ"></textarea><div class="pics" id="pics"></div><input id="pic" type="file" accept="image/*" hidden>`;
   const t=$("#ed");t.value=n.b;t.oninput=()=>{n.b=t.value;n.u=Date.now();persist()};
-  $("#bk").onclick=()=>{if(!n.b.trim())notes=notes.filter(x=>x!==n);persist();home()};
-  $("#dl").onclick=()=>{notes=notes.filter(x=>x!==n);persist();home()};
+  $("#bk").onclick=()=>{if(!n.b.trim()&&!(n.ph&&n.ph.length))notes=notes.filter(x=>x!==n);persist();home()};
+  $("#dl").onclick=async()=>{for(const k of n.ph||[])await pDel(k).catch(()=>{});notes=notes.filter(x=>x!==n);persist();home()};
+  $("#ph").onclick=()=>$("#pic").click();
+  $("#pic").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;try{const b=await shrink(f),k="p"+Date.now();await pPut(k,b);(n.ph=n.ph||[]).push(k);n.u=Date.now();persist();pics(n)}catch{}};
+  pics(n);
+}
+async function pics(n){
+  const w=$("#pics");if(!w)return;w.innerHTML="";
+  for(const k of n.ph||[]){const b=await pGet(k).catch(()=>null);if(!b)continue;const u=URL.createObjectURL(b),i=new Image();i.src=u;i.onclick=()=>viewPic(n,k,b,u);w.appendChild(i)}
+}
+function viewPic(n,k,b,u){
+  const d=document.createElement("div");d.className="sheet vw";
+  d.innerHTML=`<img src="${u}"><div class="vb"><button id="sh">共有・保存</button><button id="rm">削除</button><button id="cl">閉じる</button></div>`;
+  document.body.appendChild(d);
+  $("#cl").onclick=()=>d.remove();
+  $("#rm").onclick=async()=>{await pDel(k).catch(()=>{});n.ph=n.ph.filter(x=>x!==k);persist();d.remove();pics(n)};
+  $("#sh").onclick=async()=>{const f=new File([b],"photo.jpg",{type:"image/jpeg"});try{if(navigator.canShare&&navigator.canShare({files:[f]}))await navigator.share({files:[f]});else{const a=document.createElement("a");a.href=u;a.download="photo.jpg";a.click()}}catch{}};
 }
 
 // ── 合言葉の設定: 「メモ」の文字を長押し ──
@@ -106,16 +125,21 @@ async function unlock(t){
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
 function chat(){
-  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span class="soft" id="st"></span></div><div class="lines" id="ls"></div><div class="comp"><textarea id="in" rows="1" placeholder="書き足す"></textarea><select id="ttl"><option value="3600">1時間</option><option value="86400" selected>1日</option><option value="604800">7日</option><option value="b">読んだら消す</option></select><button id="sd">追加</button></div>`;
-  $("#bk").onclick=home;$("#sd").onclick=send;
+  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span class="soft" id="st"></span></div><div class="lines" id="ls"></div><div class="comp"><textarea id="in" rows="1" placeholder="書き足す"></textarea><select id="ttl"><option value="3600">1時間</option><option value="86400" selected>1日</option><option value="604800">7日</option><option value="315360000">残す</option><option value="b">読んだら消す</option></select><button id="sd">追加</button></div>`;
+  $("#bk").onclick=home;$("#sd").onclick=send;$("#ls").onclick=tap;
   const i=$("#in");i.oninput=()=>{i.style.height="auto";i.style.height=Math.min(i.scrollHeight,120)+"px"};
   pull();T=setInterval(pull,4000);
 }
-function add(m,ts){
-  const ls=$("#ls"),dt=new Date(ts),day=dt.toLocaleDateString("ja-JP",{month:"long",day:"numeric"});
+function add(m,ts,id){
+  const ls=$("#ls"),dt=new Date(ts),day=dt.toLocaleDateString("ja-JP",{month:"long",day:"numeric"}),me=m.f===S.me;
   if(day!==S.day){S.day=day;ls.insertAdjacentHTML("beforeend",`<div class="day">${day}</div>`)}
-  ls.insertAdjacentHTML("beforeend",`<div class="ln${m.f===S.me?"":" t"}"><p>${esc(m.t)}</p><time>${dt.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}</time></div>`);
+  ls.insertAdjacentHTML("beforeend",`<div class="ln${me?" me":" t"}" data-id="${id}"><p>${esc(m.t)}</p><time>${dt.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}</time>${me?'<button class="dl">削除</button>':""}</div>`);
   ls.scrollTop=ls.scrollHeight;
+}
+async function tap(e){
+  const l=e.target.closest(".ln");if(!l||!S)return;
+  if(e.target.matches(".dl")){try{await rpc("memo_del",{p_room:S.room,p_ids:[+l.dataset.id]});l.remove()}catch{$("#st").textContent="削除できませんでした"}return}
+  if(l.classList.contains("me"))l.classList.toggle("sel");
 }
 async function pull(){
   const s=S;if(!s||s.busy)return;s.busy=1;
@@ -124,7 +148,7 @@ async function pull(){
     for(const r of rows){
       s.last=Math.max(s.last,r.mid);if(s.seen.has(r.mid))continue;s.seen.add(r.mid);
       const m=await unseal(s.key,r.mpayload);if(!m||S!==s)continue;
-      add(m,r.mcreated);if(r.mburn&&m.f!==s.me)burn.push(r.mid);
+      add(m,r.mcreated,r.mid);if(r.mburn&&m.f!==s.me)burn.push(r.mid);
     }
     if(burn.length)rpc("memo_burn",{p_room:s.room,p_ids:burn}).catch(()=>{});
     if(S===s)$("#st").textContent="";
