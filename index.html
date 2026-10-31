@@ -32,7 +32,7 @@ button{background:none;border:0;color:var(--acc);font:inherit;padding:6px 4px}
 .ln p{margin:0;flex:1;white-space:pre-wrap;word-break:break-word}
 .ln.t{padding-left:12px;border-left:2px solid var(--faint)}
 .ln time{font-size:11px;color:var(--faint)}
-.pics{display:flex;gap:8px;overflow-x:auto;padding:0 20px 8px}.pics img{width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none}.vw{flex-direction:column;gap:14px;background:rgba(0,0,0,.88)}.vw button{color:#fff}.vb{display:flex;gap:22px}.ln .dl{display:none;color:var(--soft);font-size:13px}.ln.sel .dl{display:inline}.vw img{max-width:100%;max-height:calc(100% - 64px)}
+.ph{color:var(--acc)}.ln img{max-width:100%;max-height:260px;border-radius:8px;display:block;margin-top:4px}.pics{display:flex;gap:8px;overflow-x:auto;padding:0 20px 8px}.pics img{width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none}.vw{flex-direction:column;gap:14px;background:rgba(0,0,0,.88)}.vw button{color:#fff}.vb{display:flex;gap:22px}.ln .dl{display:none;color:var(--soft);font-size:13px}.ln.sel .dl{display:inline}.vw img{max-width:100%;max-height:calc(100% - 64px)}
 .day{text-align:center;font-size:12px;color:var(--faint);margin:14px 0 6px}
 .comp{display:flex;gap:6px;align-items:flex-end;padding:8px 16px;border-top:1px solid var(--line)}
 .comp textarea{flex:1;border:0;background:var(--line);border-radius:10px;padding:8px 12px;resize:none;max-height:120px}
@@ -66,10 +66,10 @@ let notes=JSON.parse(LS["memo.n"]||"null")||[{id:1,u:Date.now()-1728e5,b:"買い
 const db=new Promise((ok,ng)=>{const r=indexedDB.open("memo",1);r.onupgradeneeded=()=>r.result.createObjectStore("p");r.onsuccess=()=>ok(r.result);r.onerror=ng});
 const idb=async(m,f)=>{const d=await db;return new Promise((ok,ng)=>{const t=d.transaction("p",m),r=f(t.objectStore("p"));t.oncomplete=()=>ok(r.result);t.onerror=ng})};
 const pPut=(k,v)=>idb("readwrite",s=>s.put(v,k)),pGet=k=>idb("readonly",s=>s.get(k)),pDel=k=>idb("readwrite",s=>s.delete(k));
-function shrink(f){return new Promise((ok,ng)=>{const u=URL.createObjectURL(f),i=new Image();i.onload=()=>{const k=Math.min(1,1600/Math.max(i.width,i.height)),c=document.createElement("canvas");c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext("2d").drawImage(i,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?ok(b):ng(),"image/jpeg",.8)};i.onerror=ng;i.src=u})}
+function shrink(f,mx=1600,q=.8){return new Promise((ok,ng)=>{const u=URL.createObjectURL(f),i=new Image();i.onload=()=>{const k=Math.min(1,mx/Math.max(i.width,i.height)),c=document.createElement("canvas");c.width=Math.round(i.width*k);c.height=Math.round(i.height*k);c.getContext("2d").drawImage(i,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?ok(b):ng(),"image/jpeg",q)};i.onerror=ng;i.src=u})}
 const persist=()=>LS["memo.n"]=JSON.stringify(notes);
 const title=n=>n.b.split("\n")[0]||"新規メモ";
-const lock=()=>{clearInterval(T);T=0;S=null};
+let hold=0;const lock=()=>{clearInterval(T);T=0;S=null};
 
 // ── 表の顔: ふつうのメモ帳 ──
 function home(){
@@ -88,12 +88,12 @@ function fill(q){
 }
 function edit(id){
   const n=notes.find(x=>x.id===id);
-  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span><button id="ph">写真</button><button id="dl">削除</button></span></div><textarea class="ed" id="ed" placeholder="メモ"></textarea><div class="pics" id="pics"></div><input id="pic" type="file" accept="image/*" hidden>`;
+  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span><button id="cm">撮影</button><button id="ph">写真</button><button id="dl">削除</button></span></div><textarea class="ed" id="ed" placeholder="メモ"></textarea><div class="pics" id="pics"></div><input id="pic" type="file" accept="image/*" hidden><input id="cam" type="file" accept="image/*" capture="environment" hidden>`;
   const t=$("#ed");t.value=n.b;t.oninput=()=>{n.b=t.value;n.u=Date.now();persist()};
   $("#bk").onclick=()=>{if(!n.b.trim()&&!(n.ph&&n.ph.length))notes=notes.filter(x=>x!==n);persist();home()};
   $("#dl").onclick=async()=>{for(const k of n.ph||[])await pDel(k).catch(()=>{});notes=notes.filter(x=>x!==n);persist();home()};
-  $("#ph").onclick=()=>$("#pic").click();
-  $("#pic").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;try{const b=await shrink(f),k="p"+Date.now();await pPut(k,b);(n.ph=n.ph||[]).push(k);n.u=Date.now();persist();pics(n)}catch{}};
+  $("#ph").onclick=()=>$("#pic").click();$("#cm").onclick=()=>$("#cam").click();
+  $("#pic").onchange=$("#cam").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;try{const b=await shrink(f),k="p"+Date.now();await pPut(k,b);(n.ph=n.ph||[]).push(k);n.u=Date.now();persist();pics(n)}catch{}};
   pics(n);
 }
 async function pics(n){
@@ -125,21 +125,35 @@ async function unlock(t){
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
 function chat(){
-  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span class="soft" id="st"></span></div><div class="lines" id="ls"></div><div class="comp"><textarea id="in" rows="1" placeholder="書き足す"></textarea><select id="ttl"><option value="3600">1時間</option><option value="86400" selected>1日</option><option value="604800">7日</option><option value="315360000">残す</option><option value="b">読んだら消す</option></select><button id="sd">追加</button></div>`;
-  $("#bk").onclick=home;$("#sd").onclick=send;$("#ls").onclick=tap;
+  app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span><span class="soft" id="st"></span> <button id="cm">撮影</button><button id="pc">写真</button></span></div><div class="lines" id="ls"></div><div class="comp"><textarea id="in" rows="1" placeholder="書き足す"></textarea><select id="ttl"><option value="3600">1時間</option><option value="86400" selected>1日</option><option value="604800">7日</option><option value="315360000">残す</option><option value="b">読んだら消す</option></select><button id="sd">追加</button></div><input id="pic" type="file" accept="image/*" hidden><input id="cam" type="file" accept="image/*" capture="environment" hidden>`;
+  $("#bk").onclick=home;$("#sd").onclick=send;$("#cm").onclick=()=>{hold=Date.now()+12e4;$("#cam").click()};$("#pc").onclick=()=>{hold=Date.now()+12e4;$("#pic").click()};for(const k of["#pic","#cam"])$(k).onchange=e=>{hold=0;sendPic(e.target.files[0]);e.target.value=""};$("#ls").onclick=tap;
   const i=$("#in");i.oninput=()=>{i.style.height="auto";i.style.height=Math.min(i.scrollHeight,120)+"px"};
   pull();T=setInterval(pull,4000);
 }
-function add(m,ts,id){
+function add(m,ts,id,bo){
   const ls=$("#ls"),dt=new Date(ts),day=dt.toLocaleDateString("ja-JP",{month:"long",day:"numeric"}),me=m.f===S.me;
   if(day!==S.day){S.day=day;ls.insertAdjacentHTML("beforeend",`<div class="day">${day}</div>`)}
-  ls.insertAdjacentHTML("beforeend",`<div class="ln${me?" me":" t"}" data-id="${id}"><p>${esc(m.t)}</p><time>${dt.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}</time>${me?'<button class="dl">削除</button>':""}</div>`);
+  ls.insertAdjacentHTML("beforeend",`<div class="ln${me?" me":" t"}" data-id="${id}" data-p="${m.p?1:""}" data-b="${bo?1:""}"><p class="${m.p?"ph":""}">${m.p?"写真（タップで表示）":esc(m.t)}</p><time>${dt.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}</time>${me?'<button class="dl">削除</button>':""}</div>`);
   ls.scrollTop=ls.scrollHeight;
 }
 async function tap(e){
-  const l=e.target.closest(".ln");if(!l||!S)return;
-  if(e.target.matches(".dl")){try{await rpc("memo_del",{p_room:S.room,p_ids:[+l.dataset.id]});l.remove()}catch{$("#st").textContent="削除できませんでした"}return}
-  if(l.classList.contains("me"))l.classList.toggle("sel");
+  const l=e.target.closest(".ln");if(!l||!S)return;const s=S,id=+l.dataset.id;
+  if(e.target.matches(".dl")){try{await rpc("memo_del",{p_room:s.room,p_ids:[id]});l.remove()}catch{$("#st").textContent="削除できませんでした"}return}
+  if(e.target.matches("img")){const d=document.createElement("div");d.className="sheet vw";d.innerHTML=`<img src="${e.target.src}">`;d.onclick=()=>d.remove();document.body.appendChild(d);return}
+  if(l.dataset.p&&!l.dataset.ok){
+    try{const x=await rpc("memo_img",{p_room:s.room,p_id:id}),o=x&&await unseal(s.key,x);
+      if(S!==s)return;
+      if(!o||!/^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(o.d)){l.querySelector("p").textContent="表示できません";return}
+      l.dataset.ok=1;l.querySelector("p").className="";l.querySelector("p").innerHTML=`<img src="${o.d}">`;
+      if(l.dataset.b)rpc("memo_burn",{p_room:s.room,p_ids:[id]}).catch(()=>{});
+    }catch{$("#st").textContent="接続できません"}
+  }else if(l.classList.contains("me"))l.classList.toggle("sel");
+}
+const toURL=b=>new Promise(ok=>{const r=new FileReader();r.onload=()=>ok(r.result);r.readAsDataURL(b)});
+async function sendPic(f){
+  if(!f||!S)return;const s=S,b=$("#ttl").value==="b",ttl=b?604800:+$("#ttl").value;
+  try{const d=await toURL(await shrink(f,1200,.65));await rpc("memo_send",{p_room:s.room,p_payload:await seal(s.key,{f:s.me,t:"",p:1}),p_ttl_sec:ttl,p_burn:b,p_img:await seal(s.key,{d})});pull()}
+  catch{if(S===s)$("#st").textContent="送れませんでした"}
 }
 async function pull(){
   const s=S;if(!s||s.busy)return;s.busy=1;
@@ -148,7 +162,7 @@ async function pull(){
     for(const r of rows){
       s.last=Math.max(s.last,r.mid);if(s.seen.has(r.mid))continue;s.seen.add(r.mid);
       const m=await unseal(s.key,r.mpayload);if(!m||S!==s)continue;
-      add(m,r.mcreated,r.mid);if(r.mburn&&m.f!==s.me)burn.push(r.mid);
+      add(m,r.mcreated,r.mid,r.mburn&&m.f!==s.me);if(r.mburn&&m.f!==s.me&&!m.p)burn.push(r.mid);
     }
     if(burn.length)rpc("memo_burn",{p_room:s.room,p_ids:burn}).catch(()=>{});
     if(S===s)$("#st").textContent="";
@@ -163,8 +177,8 @@ async function send(){
 }
 
 // アプリを離れた瞬間に表のメモ帳へ戻し、画面・鍵をメモリから消す
-document.addEventListener("visibilitychange",()=>{if(document.hidden&&S)home()});
-addEventListener("pagehide",()=>{if(S)home()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)hold=0;else if(S&&Date.now()>hold)home()});
+addEventListener("pagehide",()=>{if(S&&Date.now()>hold)home()});
 home();
 if("serviceWorker"in navigator)addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 </script>
