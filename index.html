@@ -63,7 +63,7 @@ async function unseal(key,s){try{const[i,c]=s.split(".");return JSON.parse(dec.d
 async function rpc(fn,a){const h={apikey:SB_KEY,"Content-Type":"application/json"};if(SB_KEY.startsWith("eyJ"))h.Authorization="Bearer "+SB_KEY;const r=await fetch(`${SB_URL}/rest/v1/rpc/${fn}`,{method:"POST",headers:h,body:JSON.stringify(a)});if(!r.ok)throw new Error(r.status);const t=await r.text();return t?JSON.parse(t):null}
 
 const u8=s=>{s=s.replace(/-/g,"+").replace(/_/g,"/");return ub64(s+"=".repeat((4-s.length%4)%4))};
-async function fnc(op,a){const h={apikey:SB_KEY,"Content-Type":"application/json"};if(SB_KEY.startsWith("eyJ"))h.Authorization="Bearer "+SB_KEY;const r=await fetch(`${SB_URL}/functions/v1/memo-push`,{method:"POST",headers:h,body:JSON.stringify({op,...a})});if(!r.ok)throw new Error(r.status);return r.json()}
+async function fnc(op,a){const h={apikey:SB_KEY,"Content-Type":"application/json"};if(SB_KEY.startsWith("eyJ"))h.Authorization="Bearer "+SB_KEY;const r=await fetch(`${SB_URL}/functions/v1/memo_push`,{method:"POST",headers:h,body:JSON.stringify({op,...a})});if(!r.ok)throw new Error(r.status);return r.json()}
 const ping=x=>x&&fnc("notify",{room:x.room,dev:x.me}).catch(()=>{});
 let ps="";
 async function enablePush(room,perm){
