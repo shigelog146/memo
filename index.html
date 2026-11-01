@@ -65,13 +65,14 @@ async function rpc(fn,a){const h={apikey:SB_KEY,"Content-Type":"application/json
 const u8=s=>{s=s.replace(/-/g,"+").replace(/_/g,"/");return ub64(s+"=".repeat((4-s.length%4)%4))};
 async function fnc(op,a){const h={apikey:SB_KEY,"Content-Type":"application/json"};if(SB_KEY.startsWith("eyJ"))h.Authorization="Bearer "+SB_KEY;const r=await fetch(`${SB_URL}/functions/v1/memo-push`,{method:"POST",headers:h,body:JSON.stringify({op,...a})});if(!r.ok)throw new Error(r.status);return r.json()}
 const ping=x=>x&&fnc("notify",{room:x.room,dev:x.me}).catch(()=>{});
+let ps="";
 async function enablePush(room,perm){
-  if(!("serviceWorker"in navigator&&"PushManager"in window))throw new Error("unsupported");
-  if(await perm!=="granted")throw new Error("denied");
-  const reg=await navigator.serviceWorker.ready,{pk}=await fnc("key",{});
-  const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(pk)});
-  const dev=LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID());
-  await rpc("memo_sub",{p_room:room,p_dev:dev,p_sub:sub.toJSON()});
+  ps="非対応";if(!("serviceWorker"in navigator&&"PushManager"in window))throw new Error("ホーム画面から開き直してください");
+  ps="許可";if(await perm!=="granted")throw new Error("通知が許可されていません");
+  ps="SW";const reg=await Promise.race([navigator.serviceWorker.ready,new Promise((_,j)=>setTimeout(()=>j(new Error("準備できません")),8000))]);
+  ps="鍵";const{pk}=await fnc("key",{});
+  ps="登録";const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:u8(pk)});
+  ps="保存";await rpc("memo_sub",{p_room:room,p_dev:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID()),p_sub:sub.toJSON()});
 }
 const app=$("#app");let S=null,T=0;
 let notes=JSON.parse(LS["memo.n"]||"null")||[{id:1,u:Date.now()-1728e5,b:"買い物\n牛乳\n卵\n食パン\n洗剤"},{id:2,u:Date.now()-432e6,b:"今週の予定\n水　燃えるごみ\n金　資源ごみ"}];
@@ -136,7 +137,7 @@ function setup(){
     const v=$("#ph").value;if(v.trim().length<6){$("#msg").textContent="短すぎます";return}
     const perm=$("#nt").checked&&"Notification"in window?Notification.requestPermission():null;   // タップ直後に許可を求める(iPhone対策)
     const dv=await derive(v);LS["memo.c"]=await sha(dv.room);
-    if($("#nt").checked){try{await enablePush(dv.room,perm)}catch{$("#msg").textContent="保存しました。通知は有効にできませんでした";return}}
+    if($("#nt").checked){try{await enablePush(dv.room,perm)}catch(e){$("#msg").textContent="保存しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）";return}}
     d.remove();
   };
 }
