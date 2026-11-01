@@ -1,4 +1,4 @@
-const C="memo-v8",SHELL=["./","./index.html","./manifest.json","./icon.svg","./icon-192.png","./icon-512.png"];
+const C="memo-v9",SHELL=["./","./index.html","./manifest.json","./icon.svg","./icon-192.png","./icon-512.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(SHELL)));self.skipWaiting()});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C&&x!=="memo-n").map(x=>caches.delete(x)))));self.clients.claim()});
 self.addEventListener("fetch",e=>{
@@ -13,7 +13,7 @@ async function pushed(){
   await c.put("n",new Response(String(n)));
   if(loud)await c.put("t",new Response(String(now)));
   if(self.navigator.setAppBadge)await self.navigator.setAppBadge(n).catch(()=>{});
-  await self.registration.showNotification("メモ",{body:"更新があります",icon:"icon-192.png",tag:"memo",silent:!loud,renotify:loud});
+  await self.registration.showNotification("メモ",{body:n>1?`更新が${n}件あります`:"更新があります",icon:"icon-192.png",tag:"memo",silent:!loud,renotify:loud});
 }
 self.addEventListener("push",e=>e.waitUntil(pushed()));
 self.addEventListener("notificationclick",e=>{e.notification.close();e.waitUntil(clients.matchAll({type:"window"}).then(l=>l.length?l[0].focus():clients.openWindow("./index.html")))});
