@@ -149,6 +149,7 @@ async function unlock(t){
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
 function chat(){
+  if(navigator.clearAppBadge)navigator.clearAppBadge().catch(()=>{});
   app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span><span class="soft" id="st"></span> <button id="cm">撮影</button><button id="pc">写真</button></span></div><div class="lines" id="ls"></div><div class="hint"><span id="hx"></span><button id="hl">大胆</button><button id="hn">別の</button></div><div class="comp"><textarea id="in" rows="1" placeholder="書き足す"></textarea><select id="ttl"><option value="3600">1時間</option><option value="86400" selected>1日</option><option value="604800">7日</option><option value="315360000">残す</option><option value="b">読んだら消す</option></select><button id="sd">追加</button></div><input id="pic" type="file" accept="image/*" hidden><input id="cam" type="file" accept="image/*" capture="environment" hidden>`;
   $("#bk").onclick=home;$("#sd").onclick=send;
   const hx=$("#hx"),nx=()=>hx.textContent=pick();nx();$("#hn").onclick=nx;
