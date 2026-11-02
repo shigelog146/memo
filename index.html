@@ -128,25 +128,47 @@ function viewPic(n,k,b,u){
 }
 
 // ── 合言葉の設定: 「メモ」の文字を長押し ──
+// ── グループ(合言葉ごとのペア)の管理。保存するのは確認用の情報だけ。従来の登録(memo.c)は最初のグループとして引き継ぐ ──
+const gs=()=>JSON.parse(LS["memo.g"]||"[]"),put=L=>LS["memo.g"]=JSON.stringify(L);
+const G=()=>{const L=gs(),c=LS["memo.c"];return c&&!L.some(x=>x.h===c)?[{h:c,n:"グループ1"},...L]:L};
+async function offDevice(){try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}}
+
 function setup(){
   const d=document.createElement("div");d.className="sheet";
-  d.innerHTML=`<div class="card"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">保存</button><button id="rs">解除</button><button id="cx">閉じる</button></div><div class="soft" id="msg">${LS["memo.c"]?"設定済み":"未設定"}</div></div>`;
+  d.innerHTML=`<div class="card" style="max-height:88vh;overflow:auto"><div>登録済みのグループ</div><div id="gl"></div><div style="margin-top:10px">名前（自分用・省略可）</div><input id="nm" autocomplete="off"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">追加</button><button id="cx">閉じる</button></div><div class="soft" id="msg"></div></div>`;
   document.body.appendChild(d);
+  const msg=t=>$("#msg").textContent=t;
+  const draw=()=>{$("#gl").innerHTML=G().map(g=>`<div class="row" style="margin:4px 0"><span>${esc(g.n)}</span><button data-h="${g.h}">外す</button></div>`).join("")||'<div class="soft">まだありません</div>'};
+  draw();
   $("#cx").onclick=()=>d.remove();
-  $("#rs").onclick=async()=>{delete LS["memo.c"];try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}d.remove()};
+  $("#gl").onclick=async e=>{
+    const h=e.target.dataset&&e.target.dataset.h;if(!h||!confirm("このグループを外しますか？"))return;
+    const g=G().find(x=>x.h===h);if(!g)return;
+    if(g.p!==0){   // 通知の登録もサーバーから消す(その合言葉が必要)
+      const v=(prompt("通知の登録も消します。このグループの合言葉を入れてください（空欄ならこの端末だけ外します）")||"").trim();
+      if(v){const dv=await derive(v);if(await sha(dv.room)!==h){msg("合言葉が違うので、外すのを中止しました");return}
+        try{await rpc("memo_unsub",{p_room:dv.room,p_dev:LS["memo.i"]||""})}catch{}}
+    }
+    put(gs().filter(x=>x.h!==h));if(LS["memo.c"]===h)delete LS["memo.c"];
+    if(G().every(x=>x.p===0))await offDevice();
+    draw();msg("外しました");
+  };
   $("#ok").onclick=async()=>{
-    const v=$("#ph").value;if(v.trim().length<6){$("#msg").textContent="短すぎます";return}
-    const perm=$("#nt").checked&&"Notification"in window?Notification.requestPermission():null;   // タップ直後に許可を求める(iPhone対策)
-    const dv=await derive(v);LS["memo.c"]=await sha(dv.room);
-    if($("#nt").checked){try{await enablePush(dv.room,perm)}catch(e){$("#msg").textContent="保存しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）";return}}
-    d.remove();
+    const v=$("#ph").value.trim();if(v.length<6){msg("合言葉は6文字以上にしてください");return}
+    const nt=$("#nt").checked,perm=nt&&"Notification"in window?Notification.requestPermission():null;   // タップ直後に許可を求める(iPhone対策)
+    const dv=await derive(v),h=await sha(dv.room);
+    if(G().some(x=>x.h===h)){msg("この合言葉は、すでに登録されています");return}
+    put([...gs(),{h,n:$("#nm").value.trim()||"グループ"+(G().length+1),p:nt?1:0}]);
+    $("#ph").value="";$("#nm").value="";draw();
+    if(nt){try{await enablePush(dv.room,perm)}catch(e){put(gs().map(x=>x.h===h?{...x,p:0}:x));msg("追加しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）");return}}
+    msg("追加しました");
   };
 }
 
-// ── 裏の顔: 検索欄に合言葉を入れる(入力が止まると自動で開く / 検索キーで即開く) ──
+// ── 裏の顔: 検索欄に合言葉を入れる(入力が止まると自動で開く / 検索キーで即開く)。登録した合言葉のどれでも開く ──
 async function unlock(t){
-  const c=LS["memo.c"];t=t.trim();if(!c||t.length<6)return;
-  const d=await derive(t);if(await sha(d.room)!==c)return;
+  t=t.trim();const L=G();if(!L.length||t.length<6)return;
+  const d=await derive(t),h=await sha(d.room);if(!L.some(x=>x.h===h))return;
   const q=$("#q");if(S||!q||q.value.trim()!==t)return;   // 入力が変わっていたら開かない
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
