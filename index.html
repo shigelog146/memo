@@ -102,7 +102,7 @@ function home(){
 function fill(q){
   const L=notes.filter(n=>n.b.includes(q)).sort((a,b)=>b.u-a.u);
   $("#ls").innerHTML=L.map(n=>`<div class="item" data-i="${n.id}"><b>${esc(title(n))}</b><span>${new Date(n.u).toLocaleDateString("ja-JP")}　${esc(n.b.split("\n")[1]||(n.ph&&n.ph.length?"写真 "+n.ph.length+"枚":"追加のテキストなし"))}</span></div>`).join("")||'<p class="empty">見つかりません</p>';
-  $("#cnt").textContent=notes.length+"件のメモ";
+  unread();
 }
 function edit(id){
   const n=notes.find(x=>x.id===id);
@@ -131,6 +131,27 @@ function viewPic(n,k,b,u){
 // ── グループ(合言葉ごとのペア)の管理。保存するのは確認用の情報だけ。従来の登録(memo.c)は最初のグループとして引き継ぐ ──
 const gs=()=>JSON.parse(LS["memo.g"]||"[]"),put=L=>LS["memo.g"]=JSON.stringify(L);
 const G=()=>{const L=gs(),c=LS["memo.c"];return c&&!L.some(x=>x.h===c)?[{h:c,n:"グループ1"},...L]:L};
+async function syncNames(){try{const m={};for(const g of G())if(g.t)m[g.t]=g.n;await(await caches.open("memo-g")).put("names",new Response(JSON.stringify(m)))}catch{}}
+// メモ画面の左下: 未読があるグループを「A 2　B 1」の形で表示(なければ「N件のメモ」)
+async function unread(){
+  const el=$("#cnt");if(!el)return;let t=notes.length+"件のメモ";
+  try{
+    const r=await(await caches.open("memo-g")).match("names"),nm=r?await r.json():{},c=await caches.open("memo-n"),p=[];
+    for(const k of await c.keys()){const f=new URL(k.url).pathname.split("/").pop();if(!f.startsWith("n-"))continue;const n=+await(await c.match(k)).text();if(n>0)p.push((nm[f.slice(2)]||"他")+" "+n)}
+    if(p.length)t=p.join("　");
+  }catch{}
+  el.textContent=t;
+}
+async function seen(room){   // このグループの未読を消す。他のグループに未読が残れば、バッジと通知は残りの合計にする
+  const t=room.slice(0,8);
+  try{
+    const c=await caches.open("memo-n");for(const k of["n-"+t,"n-"])await c.delete(k);
+    let tot=0;for(const k of await c.keys()){if(new URL(k.url).pathname.split("/").pop().startsWith("n-"))tot+=+await(await c.match(k)).text()}
+    const r=await navigator.serviceWorker.ready;
+    if(tot>0){if(navigator.setAppBadge)navigator.setAppBadge(tot).catch(()=>{});r.showNotification("メモ",{body:`更新が${tot}件あります`,icon:"icon-192.png",tag:"memo",silent:true})}
+    else{await c.delete("t-all");if(navigator.clearAppBadge)navigator.clearAppBadge().catch(()=>{});for(const tg of["memo","memo-"+t,"memo-"])(await r.getNotifications({tag:tg})).forEach(n=>n.close())}
+  }catch{}
+}
 async function offDevice(){try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}}
 
 function setup(){
@@ -151,14 +172,14 @@ function setup(){
     }
     put(gs().filter(x=>x.h!==h));if(LS["memo.c"]===h)delete LS["memo.c"];
     if(G().every(x=>x.p===0))await offDevice();
-    draw();msg("外しました");
+    syncNames();draw();msg("外しました");
   };
   $("#ok").onclick=async()=>{
     const v=$("#ph").value.trim();if(v.length<6){msg("合言葉は6文字以上にしてください");return}
     const nt=$("#nt").checked,perm=nt&&"Notification"in window?Notification.requestPermission():null;   // タップ直後に許可を求める(iPhone対策)
     const dv=await derive(v),h=await sha(dv.room);
     if(G().some(x=>x.h===h)){msg("この合言葉は、すでに登録されています");return}
-    put([...gs(),{h,n:$("#nm").value.trim()||"グループ"+(G().length+1),p:nt?1:0}]);
+    put([...gs(),{h,n:$("#nm").value.trim()||"グループ"+(G().length+1),t:dv.room.slice(0,8),p:nt?1:0}]);syncNames();
     $("#ph").value="";$("#nm").value="";draw();
     if(nt){try{await enablePush(dv.room,perm)}catch(e){put(gs().map(x=>x.h===h?{...x,p:0}:x));msg("追加しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）");return}}
     msg("追加しました");
@@ -168,14 +189,13 @@ function setup(){
 // ── 裏の顔: 検索欄に合言葉を入れる(入力が止まると自動で開く / 検索キーで即開く)。登録した合言葉のどれでも開く ──
 async function unlock(t){
   t=t.trim();const L=G();if(!L.length||t.length<6)return;
-  const d=await derive(t),h=await sha(d.room);if(!L.some(x=>x.h===h))return;
+  const d=await derive(t),h=await sha(d.room);const g=L.find(x=>x.h===h);if(!g)return;
   const q=$("#q");if(S||!q||q.value.trim()!==t)return;   // 入力が変わっていたら開かない
+  if(!g.t){put([...gs().filter(x=>x.h!==h),{...g,t:d.room.slice(0,8)}]);syncNames()}   // 従来の登録にも通知用の目印を付ける
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
 function chat(){
-  if(navigator.clearAppBadge)navigator.clearAppBadge().catch(()=>{});
-  if(window.caches)caches.delete("memo-n");
-  if(navigator.serviceWorker)navigator.serviceWorker.ready.then(r=>r.getNotifications()).then(l=>l.forEach(n=>n.close())).catch(()=>{});
+  seen(S.room);
   app.innerHTML=`<div class="bar"><button id="bk">‹ メモ</button><span><span class="soft" id="st"></span> <button id="cm">撮影</button><button id="pc">写真</button></span></div><div class="lines" id="ls"></div><div class="hint"><span id="hx"></span><button id="hl">大胆</button><button id="hn">別の</button></div><div class="comp"><textarea id="in" rows="1" placeholder="書き足す"></textarea><select id="ttl"><option value="3600">1時間</option><option value="86400" selected>1日</option><option value="604800">7日</option><option value="315360000">残す</option><option value="b">読んだら消す</option></select><button id="sd">追加</button></div><input id="pic" type="file" accept="image/*" hidden><input id="cam" type="file" accept="image/*" capture="environment" hidden>`;
   $("#bk").onclick=home;$("#sd").onclick=send;
   const hx=$("#hx"),nx=()=>hx.textContent=pick();nx();$("#hn").onclick=nx;
@@ -233,7 +253,7 @@ async function send(){
 // アプリを離れた瞬間に表のメモ帳へ戻し、画面・鍵をメモリから消す
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)hold=0;else if(S&&Date.now()>hold)home()});
 addEventListener("pagehide",()=>{if(S&&Date.now()>hold)home()});
-home();
+syncNames();home();setInterval(()=>{if($("#cnt"))unread()},3000);document.addEventListener("visibilitychange",()=>{if(!document.hidden)unread()});
 if("serviceWorker"in navigator)addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 </script>
 </body>
