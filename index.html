@@ -57,7 +57,8 @@ const sha=async s=>hex(await crypto.subtle.digest("SHA-256",enc.encode(s)));
 
 // 合言葉 → 部屋ID と 暗号鍵(別々に導出)。サーバーには合言葉も平文も渡らない
 async function pbk(p,salt){const k=await crypto.subtle.importKey("raw",enc.encode(p.normalize("NFKC").trim()),"PBKDF2",false,["deriveBits"]);return crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-256",salt:enc.encode(salt),iterations:150000},k,256)}
-async function derive(p){const room=hex(await pbk(p,"memo.room.v1"));const key=await crypto.subtle.importKey("raw",await pbk(p,"memo.key.v1"),"AES-GCM",false,["encrypt","decrypt"]);return{room,key}}
+async function derive(p){const room=hex(await pbk(p,"memo.room.v1")),kb=await pbk(p,"memo.key.v1");return{room,kb,key:await crypto.subtle.importKey("raw",kb,"AES-GCM",false,["encrypt","decrypt"])}}
+async function skey(c,s){const k=await crypto.subtle.importKey("raw",enc.encode(c.normalize("NFKC").trim()),"PBKDF2",false,["deriveKey"]);return crypto.subtle.deriveKey({name:"PBKDF2",hash:"SHA-256",salt:ub64(s),iterations:150000},k,{name:"AES-GCM",length:256},false,["encrypt","decrypt"])}
 async function seal(key,o){const iv=crypto.getRandomValues(new Uint8Array(12));return b64(iv)+"."+b64(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(o))))}
 async function unseal(key,s){try{const[i,c]=s.split(".");return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:ub64(i)},key,ub64(c))))}catch{return null}}
 async function rpc(fn,a){const h={apikey:SB_KEY,"Content-Type":"application/json"};if(SB_KEY.startsWith("eyJ"))h.Authorization="Bearer "+SB_KEY;const r=await fetch(`${SB_URL}/rest/v1/rpc/${fn}`,{method:"POST",headers:h,body:JSON.stringify(a)});if(!r.ok)throw new Error(r.status);const t=await r.text();return t?JSON.parse(t):null}
@@ -94,7 +95,7 @@ function home(){
   lock();
   app.innerHTML=`<header><h1 id="h">メモ</h1><input class="search" id="q" type="search" placeholder="検索" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false"></header><div class="list" id="ls"></div><div class="bar"><span class="soft" id="cnt"></span><button id="add">＋ 新規</button></div>`;
   fill("");
-  const q=$("#q");q.oninput=()=>fill(q.value);q.onkeydown=e=>{if(e.key==="Enter")unlock(q.value)};
+  const q=$("#q");let tm;q.oninput=()=>{fill(q.value);clearTimeout(tm);tm=setTimeout(()=>unlock(q.value),700)};q.onkeydown=e=>{if(e.key==="Enter"){clearTimeout(tm);unlock(q.value)}};
   $("#add").onclick=()=>{const n={id:Date.now(),u:Date.now(),b:""};notes.push(n);edit(n.id)};
   $("#ls").onclick=e=>{const i=e.target.closest(".item");if(i)edit(+i.dataset.i)};
   let p;const h=$("#h");h.onpointerdown=()=>p=setTimeout(setup,800);h.onpointerup=h.onpointerleave=()=>clearTimeout(p);
@@ -129,24 +130,35 @@ function viewPic(n,k,b,u){
 
 // ── 合言葉の設定: 「メモ」の文字を長押し ──
 function setup(){
-  const d=document.createElement("div");d.className="sheet";
-  d.innerHTML=`<div class="card"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">保存</button><button id="rs">解除</button><button id="cx">閉じる</button></div><div class="soft" id="msg">${LS["memo.c"]?"設定済み":"未設定"}</div></div>`;
+  const d=document.createElement("div");d.className="sheet",R=()=>JSON.parse(LS["memo.r"]||"[]");
+  const n=()=>R().length+(LS["memo.c"]?1:0),msg=t=>$("#msg").textContent=t;
+  d.innerHTML=`<div class="card"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><div>自分用の短い合言葉（3文字以上・空なら上と同じ）</div><input id="sc" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">追加</button><button id="rs">全解除</button><button id="cx">閉じる</button></div><div class="soft" id="msg">登録 ${n()}件</div></div>`;
   document.body.appendChild(d);
-  $("#cx").onclick=()=>d.remove();$("#rs").onclick=async()=>{delete LS["memo.c"];try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}d.remove()};
+  $("#cx").onclick=()=>d.remove();
+  $("#rs").onclick=async()=>{delete LS["memo.r"];delete LS["memo.c"];try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}d.remove()};
   $("#ok").onclick=async()=>{
-    const v=$("#ph").value;if(v.trim().length<6){$("#msg").textContent="短すぎます";return}
+    const v=$("#ph").value.trim(),c=$("#sc").value.trim()||v;
+    if(v.length<6){msg("合言葉は6文字以上にしてください");return}
+    if(c.length<3){msg("短い合言葉は3文字以上にしてください");return}
     const perm=$("#nt").checked&&"Notification"in window?Notification.requestPermission():null;   // タップ直後に許可を求める(iPhone対策)
-    const dv=await derive(v);LS["memo.c"]=await sha(dv.room);
-    if($("#nt").checked){try{await enablePush(dv.room,perm)}catch(e){$("#msg").textContent="保存しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）";return}}
+    const dv=await derive(v),L=R();
+    for(const e of L)if(await unseal(await skey(c,e.s),e.b)){msg("この短い合言葉は、すでに使われています");return}
+    const s=b64(crypto.getRandomValues(new Uint8Array(16)));
+    L.push({s,b:await seal(await skey(c,s),{r:dv.room,k:b64(dv.kb)})});LS["memo.r"]=JSON.stringify(L);
+    if($("#nt").checked){try{await enablePush(dv.room,perm)}catch(e){msg("追加しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）");return}}
     d.remove();
   };
 }
 
-// ── 裏の顔: 検索欄に合言葉を入れて Enter ──
+// ── 裏の顔: 検索欄に合言葉(短い方でも長い方でも)を入れる ──
 async function unlock(t){
-  const c=LS["memo.c"];if(!c||t.trim().length<6)return;
-  const d=await derive(t);if(await sha(d.room)!==c)return;
-  S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
+  t=t.trim();const L=JSON.parse(LS["memo.r"]||"[]");
+  if(t.length<3||(!L.length&&!LS["memo.c"]))return;
+  let d=null;
+  for(const e of L){const o=await unseal(await skey(t,e.s),e.b);if(o){d={room:o.r,key:await crypto.subtle.importKey("raw",ub64(o.k),"AES-GCM",false,["encrypt","decrypt"])};break}}
+  if(!d&&LS["memo.c"]&&t.length>=6){const x=await derive(t);if(await sha(x.room)===LS["memo.c"])d=x}
+  const q=$("#q");if(!d||S||!q||q.value.trim()!==t)return;   // 入力が変わっていたら開かない
+  S={room:d.room,key:d.key,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
 function chat(){
   if(navigator.clearAppBadge)navigator.clearAppBadge().catch(()=>{});
