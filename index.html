@@ -57,7 +57,7 @@ const sha=async s=>hex(await crypto.subtle.digest("SHA-256",enc.encode(s)));
 
 // 合言葉 → 部屋ID と 暗号鍵(別々に導出)。サーバーには合言葉も平文も渡らない
 async function pbk(p,salt){const k=await crypto.subtle.importKey("raw",enc.encode(p.normalize("NFKC").trim()),"PBKDF2",false,["deriveBits"]);return crypto.subtle.deriveBits({name:"PBKDF2",hash:"SHA-256",salt:enc.encode(salt),iterations:150000},k,256)}
-async function derive(p){const room=hex(await pbk(p,"memo.room.v1"));const key=await crypto.subtle.importKey("raw",await pbk(p,"memo.key.v1"),"AES-GCM",false,["encrypt","decrypt"]);return{room,key}}
+async function derive(p){const room=hex(await pbk(p,"memo.room.v1")),kb=await pbk(p,"memo.key.v1");return{room,kb,key:await crypto.subtle.importKey("raw",kb,"AES-GCM",false,["encrypt","decrypt"])}}
 async function seal(key,o){const iv=crypto.getRandomValues(new Uint8Array(12));return b64(iv)+"."+b64(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(o))))}
 async function unseal(key,s){try{const[i,c]=s.split(".");return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:ub64(i)},key,ub64(c))))}catch{return null}}
 async function rpc(fn,a){const h={apikey:SB_KEY,"Content-Type":"application/json"};if(SB_KEY.startsWith("eyJ"))h.Authorization="Bearer "+SB_KEY;const r=await fetch(`${SB_URL}/rest/v1/rpc/${fn}`,{method:"POST",headers:h,body:JSON.stringify(a)});if(!r.ok)throw new Error(r.status);const t=await r.text();return t?JSON.parse(t):null}
@@ -92,12 +92,13 @@ const lock=()=>{clearInterval(T);T=0;S=null};
 // ── 表の顔: ふつうのメモ帳 ──
 function home(){
   lock();
-  app.innerHTML=`<header><h1 id="h">メモ</h1><input class="search" id="q" type="search" placeholder="検索" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false"></header><div class="list" id="ls"></div><div class="bar"><span class="soft" id="cnt"></span><button id="add">＋ 新規</button></div>`;
+  app.innerHTML=`<header><h1 id="h">メモ</h1><input class="search" id="q" type="search" placeholder="検索" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false"></header><div class="list" id="ls"></div><div class="bar"><span class="soft" id="cnt" style="padding:12px 14px 12px 0;user-select:none;-webkit-user-select:none"></span><button id="add">＋ 新規</button></div>`;
   fill("");
   const q=$("#q");let tm;q.oninput=()=>{fill(q.value);clearTimeout(tm);tm=setTimeout(()=>unlock(q.value),700)};q.onkeydown=e=>{if(e.key==="Enter"){clearTimeout(tm);unlock(q.value)}};
   $("#add").onclick=()=>{const n={id:Date.now(),u:Date.now(),b:""};notes.push(n);edit(n.id)};
   $("#ls").onclick=e=>{const i=e.target.closest(".item");if(i)edit(+i.dataset.i)};
   let p;const h=$("#h");h.onpointerdown=()=>p=setTimeout(setup,800);h.onpointerup=h.onpointerleave=()=>clearTimeout(p);
+  let p2;const cn=$("#cnt");cn.onpointerdown=()=>p2=setTimeout(picker,700);cn.onpointerup=cn.onpointerleave=cn.onpointercancel=()=>clearTimeout(p2);
 }
 function fill(q){
   const L=notes.filter(n=>n.b.includes(q)).sort((a,b)=>b.u-a.u);
@@ -131,6 +132,7 @@ function viewPic(n,k,b,u){
 // ── グループ(合言葉ごとのペア)の管理。保存するのは確認用の情報だけ。従来の登録(memo.c)は最初のグループとして引き継ぐ ──
 const gs=()=>JSON.parse(LS["memo.g"]||"[]"),put=L=>LS["memo.g"]=JSON.stringify(L);
 const G=()=>{const L=gs(),c=LS["memo.c"];return c&&!L.some(x=>x.h===c)?[{h:c,n:"グループ1"},...L]:L};
+const K=()=>JSON.parse(LS["memo.k"]||"{}"),setK=o=>LS["memo.k"]=JSON.stringify(o);
 async function syncNames(){try{const m={};for(const g of G())if(g.t)m[g.t]=g.n;await(await caches.open("memo-g")).put("names",new Response(JSON.stringify(m)))}catch{}}
 // メモ画面の左下: 未読があるグループを「A 2　B 1」の形で表示(なければ「N件のメモ」)
 async function unread(){
@@ -156,21 +158,30 @@ async function offDevice(){try{const r=await navigator.serviceWorker.ready,s=awa
 
 function setup(){
   const d=document.createElement("div");d.className="sheet";
-  d.innerHTML=`<div class="card" style="max-height:88vh;overflow:auto"><div>登録済みのグループ</div><div id="gl"></div><div style="margin-top:10px">名前（自分用・省略可）</div><input id="nm" autocomplete="off"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">追加</button><button id="cx">閉じる</button></div><div class="soft" id="msg"></div></div>`;
+  d.innerHTML=`<div class="card" style="max-height:88vh;overflow:auto"><div>登録済みのグループ</div><div id="gl"></div><div style="margin-top:10px">名前（自分用・省略可）</div><input id="nm" autocomplete="off"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 6px"><input id="rm" type="checkbox" checked style="width:auto;display:inline;margin:0 6px 0 0">長押しの一覧に出す（この端末にカギを保存）</label><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">追加</button><button id="cx">閉じる</button></div><div class="soft" id="msg"></div></div>`;
   document.body.appendChild(d);
   const msg=t=>$("#msg").textContent=t;
-  const draw=()=>{$("#gl").innerHTML=G().map(g=>`<div class="row" style="margin:4px 0"><span>${esc(g.n)}</span><button data-h="${g.h}">外す</button></div>`).join("")||'<div class="soft">まだありません</div>'};
+  const draw=()=>{const k=K();$("#gl").innerHTML=G().map(g=>`<div class="row" style="margin:4px 0"><span>${esc(g.n)}</span><span><button data-a="${k[g.h]?"unpin":"pin"}" data-h="${g.h}">${k[g.h]?"一覧から消す":"一覧に出す"}</button><button data-a="rm" data-h="${g.h}">外す</button></span></div>`).join("")||'<div class="soft">まだありません</div>'};
   draw();
+  const tag=(h,room)=>{const g=G().find(x=>x.h===h);if(g&&!g.t){put([...gs().filter(x=>x.h!==h),{...g,t:room.slice(0,8)}]);syncNames()}};
   $("#cx").onclick=()=>d.remove();
   $("#gl").onclick=async e=>{
-    const h=e.target.dataset&&e.target.dataset.h;if(!h||!confirm("このグループを外しますか？"))return;
+    const h=e.target.dataset&&e.target.dataset.h,a=e.target.dataset&&e.target.dataset.a;if(!h)return;
     const g=G().find(x=>x.h===h);if(!g)return;
+    if(a==="unpin"){const k=K();delete k[h];setK(k);draw();msg("一覧から消しました");return}
+    if(a==="pin"){   // 合言葉を1回入れると、一覧から開けるようになる
+      const v=(prompt("このグループの合言葉を入れてください")||"").trim();if(!v)return;
+      const dv=await derive(v);if(await sha(dv.room)!==h){msg("合言葉が違います");return}
+      const k=K();k[h]={r:dv.room,k:b64(dv.kb)};setK(k);tag(h,dv.room);draw();msg("一覧に出しました");return
+    }
+    if(a!=="rm"||!confirm("このグループを外しますか？"))return;
     if(g.p!==0){   // 通知の登録もサーバーから消す(その合言葉が必要)
       const v=(prompt("通知の登録も消します。このグループの合言葉を入れてください（空欄ならこの端末だけ外します）")||"").trim();
       if(v){const dv=await derive(v);if(await sha(dv.room)!==h){msg("合言葉が違うので、外すのを中止しました");return}
         try{await rpc("memo_unsub",{p_room:dv.room,p_dev:LS["memo.i"]||""})}catch{}}
     }
     put(gs().filter(x=>x.h!==h));if(LS["memo.c"]===h)delete LS["memo.c"];
+    const k=K();delete k[h];setK(k);
     if(G().every(x=>x.p===0))await offDevice();
     syncNames();draw();msg("外しました");
   };
@@ -180,6 +191,7 @@ function setup(){
     const dv=await derive(v),h=await sha(dv.room);
     if(G().some(x=>x.h===h)){msg("この合言葉は、すでに登録されています");return}
     put([...gs(),{h,n:$("#nm").value.trim()||"グループ"+(G().length+1),t:dv.room.slice(0,8),p:nt?1:0}]);syncNames();
+    if($("#rm").checked){const k=K();k[h]={r:dv.room,k:b64(dv.kb)};setK(k)}
     $("#ph").value="";$("#nm").value="";draw();
     if(nt){try{await enablePush(dv.room,perm)}catch(e){put(gs().map(x=>x.h===h?{...x,p:0}:x));msg("追加しました。通知は有効にできませんでした（"+ps+"："+((e&&e.message)||e)+"）");return}}
     msg("追加しました");
@@ -193,6 +205,20 @@ async function unlock(t){
   const q=$("#q");if(S||!q||q.value.trim()!==t)return;   // 入力が変わっていたら開かない
   if(!g.t){put([...gs().filter(x=>x.h!==h),{...g,t:d.room.slice(0,8)}]);syncNames()}   // 従来の登録にも通知用の目印を付ける
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
+}
+async function openRemembered(h){
+  const o=K()[h];if(!o||S)return;
+  const key=await crypto.subtle.importKey("raw",ub64(o.k),"AES-GCM",false,["encrypt","decrypt"]);
+  S={room:o.r,key,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
+}
+async function picker(){
+  if(S||document.querySelector(".sheet"))return;
+  const k=K(),L=G().filter(g=>k[g.h]);let c=null;try{c=await caches.open("memo-n")}catch{}
+  const rows=[];for(const g of L){let n=0;if(c&&g.t){const r=await c.match("n-"+g.t);if(r)n=+await r.text()}rows.push({g,n})}
+  const d=document.createElement("div");d.className="sheet";
+  d.innerHTML=`<div class="card"><div class="soft" style="margin-bottom:6px">ノートを選ぶ</div>${rows.map(x=>`<div class="item" data-h="${x.g.h}"><b>${esc(x.g.n)}${x.n?"　"+x.n:""}</b></div>`).join("")||'<div class="soft">一覧に出すグループがありません</div>'}<div class="row" style="margin-top:8px"><span></span><button id="pcl">閉じる</button></div></div>`;
+  document.body.appendChild(d);
+  d.onclick=e=>{if(e.target===d||e.target.id==="pcl"){d.remove();return}const it=e.target.closest(".item");if(it){d.remove();openRemembered(it.dataset.h)}};
 }
 function chat(){
   seen(S.room);
