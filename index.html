@@ -94,7 +94,7 @@ function home(){
   lock();
   app.innerHTML=`<header><h1 id="h">メモ</h1><input class="search" id="q" type="search" placeholder="検索" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false"></header><div class="list" id="ls"></div><div class="bar"><span class="soft" id="cnt"></span><button id="add">＋ 新規</button></div>`;
   fill("");
-  const q=$("#q");q.oninput=()=>fill(q.value);q.onkeydown=e=>{if(e.key==="Enter")unlock(q.value)};
+  const q=$("#q");let tm;q.oninput=()=>{fill(q.value);clearTimeout(tm);tm=setTimeout(()=>unlock(q.value),700)};q.onkeydown=e=>{if(e.key==="Enter"){clearTimeout(tm);unlock(q.value)}};
   $("#add").onclick=()=>{const n={id:Date.now(),u:Date.now(),b:""};notes.push(n);edit(n.id)};
   $("#ls").onclick=e=>{const i=e.target.closest(".item");if(i)edit(+i.dataset.i)};
   let p;const h=$("#h");h.onpointerdown=()=>p=setTimeout(setup,800);h.onpointerup=h.onpointerleave=()=>clearTimeout(p);
@@ -132,7 +132,8 @@ function setup(){
   const d=document.createElement("div");d.className="sheet";
   d.innerHTML=`<div class="card"><div>合言葉（相手と同じもの・6文字以上）</div><input id="ph" type="password" autocomplete="off"><label class="soft" style="display:block;margin:0 0 10px"><input id="nt" type="checkbox" style="width:auto;display:inline;margin:0 6px 0 0">この端末で通知を受け取る</label><div class="row"><button id="ok">保存</button><button id="rs">解除</button><button id="cx">閉じる</button></div><div class="soft" id="msg">${LS["memo.c"]?"設定済み":"未設定"}</div></div>`;
   document.body.appendChild(d);
-  $("#cx").onclick=()=>d.remove();$("#rs").onclick=async()=>{delete LS["memo.c"];try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}d.remove()};
+  $("#cx").onclick=()=>d.remove();
+  $("#rs").onclick=async()=>{delete LS["memo.c"];try{const r=await navigator.serviceWorker.ready,s=await r.pushManager.getSubscription();if(s)await s.unsubscribe()}catch{}d.remove()};
   $("#ok").onclick=async()=>{
     const v=$("#ph").value;if(v.trim().length<6){$("#msg").textContent="短すぎます";return}
     const perm=$("#nt").checked&&"Notification"in window?Notification.requestPermission():null;   // タップ直後に許可を求める(iPhone対策)
@@ -142,10 +143,11 @@ function setup(){
   };
 }
 
-// ── 裏の顔: 検索欄に合言葉を入れて Enter ──
+// ── 裏の顔: 検索欄に合言葉を入れる(入力が止まると自動で開く / 検索キーで即開く) ──
 async function unlock(t){
-  const c=LS["memo.c"];if(!c||t.trim().length<6)return;
+  const c=LS["memo.c"];t=t.trim();if(!c||t.length<6)return;
   const d=await derive(t);if(await sha(d.room)!==c)return;
+  const q=$("#q");if(S||!q||q.value.trim()!==t)return;   // 入力が変わっていたら開かない
   S={...d,last:0,seen:new Set(),day:"",me:LS["memo.i"]||(LS["memo.i"]=crypto.randomUUID())};chat();
 }
 function chat(){
